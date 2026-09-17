@@ -30,6 +30,12 @@ PIPELINE_STEPS = [
     "refresh_market_data.py",
     "predict_weekly_monthly.py",
     "entry_decision_engine.py",
+
+    # Manage existing paper positions before opening new ones.
+    "exit_decision_engine.py",
+
+    # Mark positions, open new eligible paper positions, save snapshot.
+    "portfolio_engine.py",
 ]
 
 

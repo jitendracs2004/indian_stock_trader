@@ -54,20 +54,24 @@ HORIZONS = {
     "daily_1d": {
         "target_column": "target_1d",
         "trading_days": 1,
-        "buy_threshold": 0.0025,
-        "sell_threshold": -0.0025,
+
+        # Daily prediction is primarily used as a timing filter.
+        "buy_threshold": 0.0025,       # +0.25%
+        "sell_threshold": -0.0025,     # -0.25%
     },
+
     "weekly_5d": {
         "target_column": "target_5d",
         "trading_days": 5,
-        "buy_threshold": 0.005,
-        "sell_threshold": -0.005,
+        "buy_threshold": 0.0050,       # +0.50%
+        "sell_threshold": -0.0050,     # -0.50%
     },
+
     "monthly_20d": {
         "target_column": "target_20d",
         "trading_days": 20,
-        "buy_threshold": 0.012,
-        "sell_threshold": -0.012,
+        "buy_threshold": 0.0120,       # +1.20%
+        "sell_threshold": -0.0120,     # -1.20%
     },
 }
 

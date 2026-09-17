@@ -47,12 +47,113 @@ class PostgresDatabase:
     def create_schema(self) -> None:
         """Create required tables and indexes if they do not already exist."""
         ddl = """
+        CREATE TABLE IF NOT EXISTS portfolio_positions (
+            id BIGSERIAL PRIMARY KEY,
+
+            portfolio_name VARCHAR(100) NOT NULL DEFAULT 'paper_default',
+            symbol VARCHAR(40) NOT NULL,
+            sector VARCHAR(150),
+            status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+
+            entry_decision_id BIGINT,
+            entry_date TIMESTAMP NOT NULL,
+            entry_price DOUBLE PRECISION NOT NULL,
+            quantity INTEGER NOT NULL,
+
+            initial_stop_price DOUBLE PRECISION,
+            trailing_stop_price DOUBLE PRECISION,
+            highest_price_since_entry DOUBLE PRECISION,
+
+            current_price DOUBLE PRECISION,
+            market_value DOUBLE PRECISION,
+            unrealized_pnl_inr DOUBLE PRECISION,
+            unrealized_pnl_pct DOUBLE PRECISION,
+
+            exit_date TIMESTAMP,
+            exit_price DOUBLE PRECISION,
+            realized_pnl_inr DOUBLE PRECISION,
+            realized_pnl_pct DOUBLE PRECISION,
+            exit_reason VARCHAR(100),
+
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+            CONSTRAINT chk_position_status
+                CHECK (status IN ('OPEN', 'CLOSED')),
+
+            CONSTRAINT chk_position_quantity
+                CHECK (quantity > 0)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_portfolio_positions_open
+        ON portfolio_positions (portfolio_name, status, symbol);
+
+        CREATE INDEX IF NOT EXISTS idx_portfolio_positions_entry_date
+        ON portfolio_positions (entry_date DESC);
+
+
+        CREATE TABLE IF NOT EXISTS portfolio_transactions (
+            id BIGSERIAL PRIMARY KEY,
+
+            portfolio_position_id BIGINT REFERENCES portfolio_positions(id),
+            portfolio_name VARCHAR(100) NOT NULL DEFAULT 'paper_default',
+
+            transaction_date TIMESTAMP NOT NULL,
+            symbol VARCHAR(40) NOT NULL,
+            transaction_type VARCHAR(20) NOT NULL,
+
+            quantity INTEGER NOT NULL,
+            price DOUBLE PRECISION NOT NULL,
+            gross_value DOUBLE PRECISION NOT NULL,
+
+            estimated_cost_inr DOUBLE PRECISION NOT NULL DEFAULT 0,
+            net_value DOUBLE PRECISION NOT NULL,
+
+            reason VARCHAR(150),
+            source VARCHAR(100) NOT NULL DEFAULT 'paper_portfolio_engine',
+
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+            CONSTRAINT chk_transaction_type
+                CHECK (transaction_type IN ('BUY', 'SELL'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_portfolio_transactions_symbol_date
+        ON portfolio_transactions (symbol, transaction_date DESC);
+
+
+        CREATE TABLE IF NOT EXISTS portfolio_daily_snapshots (
+            id BIGSERIAL PRIMARY KEY,
+
+            portfolio_name VARCHAR(100) NOT NULL DEFAULT 'paper_default',
+            snapshot_date DATE NOT NULL,
+
+            cash_inr DOUBLE PRECISION NOT NULL,
+            holdings_value_inr DOUBLE PRECISION NOT NULL,
+            total_value_inr DOUBLE PRECISION NOT NULL,
+
+            open_positions INTEGER NOT NULL DEFAULT 0,
+            gross_exposure_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+            daily_pnl_inr DOUBLE PRECISION,
+            total_pnl_inr DOUBLE PRECISION,
+            drawdown_pct DOUBLE PRECISION,
+
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+            CONSTRAINT uq_portfolio_snapshot
+                UNIQUE (portfolio_name, snapshot_date)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date
+        ON portfolio_daily_snapshots (portfolio_name, snapshot_date DESC);
+
         CREATE TABLE IF NOT EXISTS entry_decisions (
             id BIGSERIAL PRIMARY KEY,
 
             symbol VARCHAR(40) NOT NULL,
             decision_date TIMESTAMP NOT NULL,
 
+            daily_predicted_return DOUBLE PRECISION,
             weekly_predicted_return DOUBLE PRECISION,
             monthly_predicted_return DOUBLE PRECISION,
 
@@ -67,6 +168,7 @@ class PostgresDatabase:
             market_sma_200 DOUBLE PRECISION,
             market_regime VARCHAR(30),
 
+            raw_daily_signal SMALLINT,
             raw_weekly_signal SMALLINT,
             raw_monthly_signal SMALLINT,
 
@@ -372,6 +474,8 @@ class PostgresDatabase:
             )
 
         optional_columns = [
+            "daily_predicted_return",
+            "raw_daily_signal",
             "weekly_predicted_return",
             "monthly_predicted_return",
             "latest_close",
@@ -407,6 +511,7 @@ class PostgresDatabase:
         )
 
         numeric_columns = [
+            "daily_predicted_return",
             "weekly_predicted_return",
             "monthly_predicted_return",
             "latest_close",
@@ -432,6 +537,7 @@ class PostgresDatabase:
             )
 
         for column in [
+            "raw_daily_signal",
             "raw_weekly_signal",
             "raw_monthly_signal",
             "suggested_quantity",
@@ -444,6 +550,7 @@ class PostgresDatabase:
         fields = [
             "symbol",
             "decision_date",
+            "daily_predicted_return",
             "weekly_predicted_return",
             "monthly_predicted_return",
             "latest_close",
@@ -455,6 +562,7 @@ class PostgresDatabase:
             "market_sma_50",
             "market_sma_200",
             "market_regime",
+            "raw_daily_signal",
             "raw_weekly_signal",
             "raw_monthly_signal",
             "entry_status",
@@ -476,6 +584,7 @@ class PostgresDatabase:
             INSERT INTO entry_decisions (
                 symbol,
                 decision_date,
+                daily_predicted_return,
                 weekly_predicted_return,
                 monthly_predicted_return,
                 latest_close,
@@ -487,6 +596,7 @@ class PostgresDatabase:
                 market_sma_50,
                 market_sma_200,
                 market_regime,
+                raw_daily_signal,
                 raw_weekly_signal,
                 raw_monthly_signal,
                 entry_status,
@@ -506,6 +616,7 @@ class PostgresDatabase:
             VALUES (
                 :symbol,
                 :decision_date,
+                :daily_predicted_return,
                 :weekly_predicted_return,
                 :monthly_predicted_return,
                 :latest_close,
@@ -517,6 +628,7 @@ class PostgresDatabase:
                 :market_sma_50,
                 :market_sma_200,
                 :market_regime,
+                :raw_daily_signal,
                 :raw_weekly_signal,
                 :raw_monthly_signal,
                 :entry_status,
@@ -540,6 +652,7 @@ class PostgresDatabase:
                 model_version
             )
             DO UPDATE SET
+                daily_predicted_return = EXCLUDED.daily_predicted_return,
                 weekly_predicted_return = EXCLUDED.weekly_predicted_return,
                 monthly_predicted_return = EXCLUDED.monthly_predicted_return,
                 latest_close = EXCLUDED.latest_close,
@@ -551,6 +664,7 @@ class PostgresDatabase:
                 market_sma_50 = EXCLUDED.market_sma_50,
                 market_sma_200 = EXCLUDED.market_sma_200,
                 market_regime = EXCLUDED.market_regime,
+                raw_daily_signal = EXCLUDED.raw_daily_signal,
                 raw_weekly_signal = EXCLUDED.raw_weekly_signal,
                 raw_monthly_signal = EXCLUDED.raw_monthly_signal,
                 entry_status = EXCLUDED.entry_status,

@@ -4,6 +4,7 @@ Streamlit dashboard for Indian Stock Trader.
 Reads local PostgreSQL data:
 - market_ohlcv: historical daily NSE/BSE price data
 - model_signals: daily, weekly, monthly model predictions
+- entry_decisions: final 9-condition entry engine output
 
 Run:
     streamlit run streamlit_dashboard.py
@@ -59,6 +60,164 @@ HORIZON_CONFIG = {
         "days": 20,
     },
 }
+
+
+# ---------------------------------------------------------------------
+# Theme / styling
+# ---------------------------------------------------------------------
+def inject_theme() -> None:
+    """Inject a compact professional stylesheet."""
+    st.markdown(
+        """
+        <style>
+        /* Base typography */
+        html, body, [class*="css"] {
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system,
+                         sans-serif;
+        }
+
+        /* Tighten the main container width and padding */
+        .block-container {
+            padding-top: 2.2rem;
+            padding-bottom: 3rem;
+            max-width: 1500px;
+        }
+
+        /* Section headings */
+        h1, h2, h3 {
+            color: #0f172a;
+            letter-spacing: -0.01em;
+        }
+
+        /* Metric cards */
+        div[data-testid="stMetric"] {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px 18px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        div[data-testid="stMetric"] label {
+            color: #64748b;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        /* Bordered containers behave like cards */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 12px;
+            border-color: #e2e8f0 !important;
+        }
+
+        /* Tabs */
+        button[data-baseweb="tab"] {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        /* Dataframe corners */
+        div[data-testid="stDataFrame"] {
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        section[data-testid="stSidebar"] {
+            background: #f8fafc;
+            border-right: 1px solid #e2e8f0;
+        }
+
+        /* Custom header bar */
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 18px 24px;
+            border-radius: 14px;
+            background: linear-gradient(120deg, #1e3a8a 0%, #2563eb 100%);
+            color: #ffffff;
+            margin-bottom: 8px;
+        }
+        .app-header .title {
+            font-size: 1.55rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin: 0;
+        }
+        .app-header .subtitle {
+            font-size: 0.9rem;
+            opacity: 0.85;
+            margin-top: 2px;
+        }
+        .app-header .badge {
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        /* Signal pill */
+        .signal-pill {
+            display: inline-block;
+            color: #ffffff;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            letter-spacing: 0.02em;
+        }
+
+        /* Section label above headers */
+        .section-eyebrow {
+            color: #2563eb;
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 2px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_header(symbol_count: int) -> None:
+    """Render the branded top header bar."""
+    st.markdown(
+        f"""
+        <div class="app-header">
+            <div>
+                <p class="title">Indian Stock Trader</p>
+                <p class="subtitle">
+                    NSE equity prediction &amp; entry-decision monitor
+                </p>
+            </div>
+            <div class="badge">{symbol_count:,} symbols tracked</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def section_title(eyebrow: str, title: str, caption: str = "") -> None:
+    """Render a consistent section header with an eyebrow label."""
+    st.markdown(
+        f'<p class="section-eyebrow">{eyebrow}</p>',
+        unsafe_allow_html=True,
+    )
+    st.subheader(title)
+    if caption:
+        st.caption(caption)
 
 
 # ---------------------------------------------------------------------
@@ -194,10 +353,9 @@ def load_latest_predictions(symbol: str) -> pd.DataFrame:
 
     return df
 
+
 @st.cache_data(ttl=60)
-def load_latest_entry_decision(
-    symbol: str,
-) -> pd.DataFrame:
+def load_latest_entry_decision(symbol: str) -> pd.DataFrame:
     """
     Load the latest final entry decision for one symbol.
 
@@ -210,6 +368,7 @@ def load_latest_entry_decision(
         SELECT
             symbol,
             decision_date,
+            daily_predicted_return,
             weekly_predicted_return,
             monthly_predicted_return,
             latest_close,
@@ -221,6 +380,7 @@ def load_latest_entry_decision(
             market_sma_50,
             market_sma_200,
             market_regime,
+            raw_daily_signal,
             raw_weekly_signal,
             raw_monthly_signal,
             entry_status,
@@ -266,6 +426,7 @@ def load_latest_entry_decision(
     )
 
     numeric_cols = [
+        "daily_predicted_return",
         "weekly_predicted_return",
         "monthly_predicted_return",
         "latest_close",
@@ -299,10 +460,9 @@ def load_latest_entry_decision(
 
     return df
 
+
 @st.cache_data(ttl=60)
-def load_top_eligible_buys(
-    limit_rows: int = 10,
-) -> pd.DataFrame:
+def load_top_eligible_buys(limit_rows: int = 10) -> pd.DataFrame:
     """
     Load the Top 10 latest final entry decisions that passed every rule.
 
@@ -405,6 +565,7 @@ def load_top_eligible_buys(
 
     return df
 
+
 @st.cache_data(ttl=60)
 def load_top_buy_predictions(
     horizon: str,
@@ -485,262 +646,6 @@ def load_top_buy_predictions(
 
     return df
 
-def show_top_buy_table(
-    horizon: str,
-    latest_prices_df: pd.DataFrame,
-) -> None:
-    """
-    Display the Top 10 latest BUY recommendations for a horizon.
-
-    latest_prices_df must contain:
-    symbol, close
-    """
-    horizon_info = HORIZON_CONFIG[horizon]
-
-    top_buy_df = load_top_buy_predictions(
-        horizon=horizon,
-        limit_rows=10,
-    )
-
-    st.subheader(
-        f"Top 10 BUY — {horizon_info['label']} "
-        f"({horizon_info['sub_label']})"
-    )
-
-    if top_buy_df.empty:
-        st.info(
-            f"No active BUY signals currently exist for "
-            f"{horizon_info['label'].lower()} predictions."
-        )
-        return
-
-    prices = latest_prices_df[
-        ["symbol", "close"]
-    ].copy()
-
-    prices = prices.rename(
-        columns={"close": "latest_close_inr"}
-    )
-
-    display_df = top_buy_df.merge(
-        prices,
-        on="symbol",
-        how="left",
-    )
-
-    display_df["expected_price_inr"] = (
-        display_df["latest_close_inr"]
-        * (1 + display_df["predicted_return"])
-    )
-
-    display_df = display_df.sort_values(
-        "predicted_return",
-        ascending=False,
-    ).reset_index(drop=True)
-
-    display_df.index = display_df.index + 1
-    display_df.index.name = "Rank"
-
-    display_df["signal_date"] = display_df[
-        "signal_date"
-    ].dt.strftime("%d %b %Y")
-
-    display_df["latest_close_inr"] = display_df[
-        "latest_close_inr"
-    ].map(format_inr)
-
-    display_df["expected_price_inr"] = display_df[
-        "expected_price_inr"
-    ].map(format_inr)
-
-    display_df["predicted_return_pct"] = display_df[
-        "predicted_return_pct"
-    ].map(format_pct)
-
-    display_df = display_df[
-        [
-            "symbol",
-            "signal_date",
-            "latest_close_inr",
-            "predicted_return_pct",
-            "expected_price_inr",
-            "model_name",
-            "model_version",
-        ]
-    ].rename(
-        columns={
-            "symbol": "Symbol",
-            "signal_date": "Prediction Date",
-            "latest_close_inr": "Latest Close",
-            "predicted_return_pct": "Predicted Return",
-            "expected_price_inr": "Expected Price",
-            "model_name": "Model",
-            "model_version": "Version",
-        }
-    )
-
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=False,
-    )
-
-    st.caption(
-        "Ranked by model-predicted return among the latest active "
-        "BUY signals. This is a research ranking, not financial advice."
-    )
-
-def show_top_eligible_buys() -> None:
-    """
-    Show only stocks that passed all nine entry checks.
-
-    This is the primary Top 10 shortlist for paper trading.
-    """
-    eligible_df = load_top_eligible_buys(limit_rows=10)
-
-    st.header("🏆 Top 10 Eligible BUY Candidates")
-
-    st.caption(
-        "These stocks passed the final entry engine: weekly forecast, "
-        "cost/error buffer, monthly confirmation, SMA-50 trend, market "
-        "regime, liquidity, duplicate-position check, exposure limits, "
-        "and ATR-based position sizing."
-    )
-
-    if eligible_df.empty:
-        st.warning(
-            "No stocks currently qualify as ELIGIBLE_BUY. "
-            "This can be normal when the broad market is bearish, "
-            "signals are weak, or liquidity/trend filters block entries."
-        )
-
-        st.info(
-            "Run these jobs in order after market data is refreshed:\n\n"
-            "1. `python predict_weekly_monthly.py`\n\n"
-            "2. `python entry_decision_engine.py`\n\n"
-            "3. Refresh this dashboard."
-        )
-        return
-
-    display_df = eligible_df.copy()
-
-    display_df["weekly_return_pct"] = (
-        display_df["weekly_predicted_return"] * 100
-    )
-
-    display_df["monthly_return_pct"] = (
-        display_df["monthly_predicted_return"] * 100
-    )
-
-    display_df["stop_distance_pct"] = (
-        (
-            display_df["entry_price"]
-            - display_df["initial_stop_price"]
-        )
-        / display_df["entry_price"]
-        * 100
-    )
-
-    display_df = display_df.sort_values(
-        by=[
-            "weekly_predicted_return",
-            "monthly_predicted_return",
-        ],
-        ascending=[False, False],
-    ).reset_index(drop=True)
-
-    display_df.index = display_df.index + 1
-    display_df.index.name = "Rank"
-
-    display_df["decision_date"] = display_df[
-        "decision_date"
-    ].dt.strftime("%d %b %Y")
-
-    for column in [
-        "latest_close",
-        "entry_price",
-        "initial_stop_price",
-        "suggested_position_value",
-        "average_traded_value_inr",
-    ]:
-        display_df[column] = display_df[column].map(
-            format_inr
-        )
-
-    for column in [
-        "weekly_return_pct",
-        "monthly_return_pct",
-        "stop_distance_pct",
-    ]:
-        display_df[column] = display_df[column].map(
-            format_pct
-        )
-
-    display_df["suggested_quantity"] = display_df[
-        "suggested_quantity"
-    ].map(
-        lambda value: f"{int(value):,}"
-    )
-
-    display_df["market_regime"] = display_df[
-        "market_regime"
-    ].fillna("UNKNOWN")
-
-    display_df["sector"] = display_df[
-        "sector"
-    ].fillna("UNKNOWN")
-
-    display_df = display_df[
-        [
-            "symbol",
-            "decision_date",
-            "sector",
-            "market_regime",
-            "latest_close",
-            "weekly_return_pct",
-            "monthly_return_pct",
-            "entry_price",
-            "initial_stop_price",
-            "stop_distance_pct",
-            "suggested_quantity",
-            "suggested_position_value",
-            "average_traded_value_inr",
-            "model_name",
-            "model_version",
-        ]
-    ].rename(
-        columns={
-            "symbol": "Symbol",
-            "decision_date": "Decision Date",
-            "sector": "Sector",
-            "market_regime": "Market Regime",
-            "latest_close": "Latest Close",
-            "weekly_return_pct": "Weekly Forecast",
-            "monthly_return_pct": "Monthly Forecast",
-            "entry_price": "Suggested Entry",
-            "initial_stop_price": "Initial Stop",
-            "stop_distance_pct": "Stop Distance",
-            "suggested_quantity": "Suggested Qty",
-            "suggested_position_value": "Position Value",
-            "average_traded_value_inr": "20D Avg Traded Value",
-            "model_name": "Model",
-            "model_version": "Version",
-        }
-    )
-
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=False,
-        height=420,
-    )
-
-    st.caption(
-        "Suggested Entry is the latest available close used by the "
-        "research engine—not a guaranteed executable price. Initial Stop "
-        "is based on ATR volatility. The suggested quantity is a "
-        "paper-trading risk allocation, not a broker order."
-    )
 
 @st.cache_data(ttl=60)
 def load_latest_prices() -> pd.DataFrame:
@@ -769,6 +674,7 @@ def load_latest_prices() -> pd.DataFrame:
         )
 
     return df
+
 
 @st.cache_data(ttl=60)
 def load_prediction_history(
@@ -843,6 +749,179 @@ def load_prediction_history(
     return df
 
 
+@st.cache_data(ttl=60)
+def load_portfolio_snapshot() -> pd.DataFrame:
+    """Load the latest paper portfolio snapshot."""
+    db = get_database()
+
+    query = text("""
+        SELECT
+            portfolio_name,
+            snapshot_date,
+            cash_inr,
+            holdings_value_inr,
+            total_value_inr,
+            open_positions,
+            gross_exposure_pct,
+            daily_pnl_inr,
+            total_pnl_inr,
+            drawdown_pct,
+            created_at
+        FROM portfolio_daily_snapshots
+        WHERE portfolio_name = 'paper_default'
+        ORDER BY snapshot_date DESC, created_at DESC
+        LIMIT 1;
+    """)
+
+    with db.engine.connect() as connection:
+        return pd.read_sql(query, connection)
+
+
+@st.cache_data(ttl=60)
+def load_open_paper_positions() -> pd.DataFrame:
+    """Load current open paper positions."""
+    db = get_database()
+
+    query = text("""
+        SELECT
+            id,
+            symbol,
+            sector,
+            entry_date,
+            entry_price,
+            quantity,
+            initial_stop_price,
+            trailing_stop_price,
+            highest_price_since_entry,
+            current_price,
+            market_value,
+            unrealized_pnl_inr,
+            unrealized_pnl_pct,
+            entry_decision_id
+        FROM portfolio_positions
+        WHERE portfolio_name = 'paper_default'
+          AND status = 'OPEN'
+        ORDER BY unrealized_pnl_pct DESC NULLS LAST, entry_date ASC;
+    """)
+
+    with db.engine.connect() as connection:
+        return pd.read_sql(query, connection)
+
+
+@st.cache_data(ttl=60)
+def load_closed_paper_positions(limit_rows: int = 50) -> pd.DataFrame:
+    """Load recently closed paper positions."""
+    db = get_database()
+
+    query = text("""
+        SELECT
+            symbol,
+            sector,
+            entry_date,
+            entry_price,
+            quantity,
+            exit_date,
+            exit_price,
+            realized_pnl_inr,
+            realized_pnl_pct,
+            exit_reason
+        FROM portfolio_positions
+        WHERE portfolio_name = 'paper_default'
+          AND status = 'CLOSED'
+        ORDER BY exit_date DESC NULLS LAST
+        LIMIT :limit_rows;
+    """)
+
+    with db.engine.connect() as connection:
+        return pd.read_sql(
+            query,
+            connection,
+            params={"limit_rows": limit_rows},
+        )
+
+
+@st.cache_data(ttl=60)
+def load_portfolio_history(days: int = 180) -> pd.DataFrame:
+    """Load daily portfolio value history."""
+    db = get_database()
+
+    query = text("""
+        SELECT
+            snapshot_date,
+            cash_inr,
+            holdings_value_inr,
+            total_value_inr,
+            open_positions,
+            gross_exposure_pct,
+            daily_pnl_inr,
+            total_pnl_inr,
+            drawdown_pct
+        FROM portfolio_daily_snapshots
+        WHERE portfolio_name = 'paper_default'
+        ORDER BY snapshot_date DESC
+        LIMIT :days;
+    """)
+
+    with db.engine.connect() as connection:
+        df = pd.read_sql(
+            query,
+            connection,
+            params={"days": days},
+        )
+
+    if not df.empty:
+        df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
+        df = df.sort_values("snapshot_date")
+
+    return df
+
+
+@st.cache_data(ttl=60)
+def load_paper_transactions(limit_rows: int = 100) -> pd.DataFrame:
+    """Load the paper portfolio BUY/SELL transaction log."""
+    db = get_database()
+
+    query = text("""
+        SELECT
+            transaction_date,
+            symbol,
+            transaction_type,
+            quantity,
+            price,
+            gross_value,
+            estimated_cost_inr,
+            net_value,
+            reason,
+            source
+        FROM portfolio_transactions
+        WHERE portfolio_name = 'paper_default'
+        ORDER BY transaction_date DESC, created_at DESC
+        LIMIT :limit_rows;
+    """)
+
+    with db.engine.connect() as connection:
+        df = pd.read_sql(
+            query,
+            connection,
+            params={"limit_rows": limit_rows},
+        )
+
+    if not df.empty:
+        df["transaction_date"] = pd.to_datetime(
+            df["transaction_date"],
+            errors="coerce",
+        )
+        for column in [
+            "price",
+            "gross_value",
+            "estimated_cost_inr",
+            "net_value",
+        ]:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    return df
+
+
 # ---------------------------------------------------------------------
 # Display helpers
 # ---------------------------------------------------------------------
@@ -860,6 +939,34 @@ def format_pct(value: float | None) -> str:
         return "—"
 
     return f"{value:+.2f}%"
+
+
+def signal_pill_html(signal_code: int, label: str) -> str:
+    """Build an inline colored pill for a signal label."""
+    color = SIGNAL_COLOR_MAP.get(signal_code, "#6b7280")
+    return (
+        f'<span class="signal-pill" style="background-color:{color};">'
+        f"{label}</span>"
+    )
+
+
+def _style_return(value: str) -> str:
+    """Color a formatted +/- percentage string green/red."""
+    if isinstance(value, str) and value.startswith("+"):
+        return "color: #16a34a; font-weight: 600;"
+    if isinstance(value, str) and value.startswith("-"):
+        return "color: #dc2626; font-weight: 600;"
+    return ""
+
+
+def _style_signal(value: str) -> str:
+    """Color a signal label cell."""
+    mapping = {
+        "BUY": "color: #16a34a; font-weight: 700;",
+        "HOLD": "color: #b45309; font-weight: 600;",
+        "SELL / EXIT": "color: #dc2626; font-weight: 700;",
+    }
+    return mapping.get(value, "")
 
 
 def get_prediction_row(
@@ -925,11 +1032,12 @@ def create_price_chart(
     )
 
     figure.update_layout(
-        title=f"{symbol} — Daily Price Chart",
-        height=550,
+        title=f"{symbol} — Daily Price",
+        height=520,
         xaxis_rangeslider_visible=False,
         yaxis_title="Price (INR)",
         template="plotly_white",
+        font=dict(family="Inter, Segoe UI, sans-serif", size=12),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -941,76 +1049,6 @@ def create_price_chart(
     )
 
     return figure
-
-
-def show_prediction_card(
-    horizon: str,
-    row: pd.Series | None,
-    latest_close: float | None,
-) -> None:
-    """Render one daily/weekly/monthly prediction card."""
-    config = HORIZON_CONFIG[horizon]
-
-    with st.container(border=True):
-        st.subheader(config["label"])
-        st.caption(config["sub_label"])
-
-        if row is None:
-            st.info(
-                f"No {config['label'].lower()} prediction is stored yet."
-            )
-            st.caption(
-                "Generate and save this horizon in the prediction script."
-            )
-            return
-
-        predicted_return_pct = float(row["predicted_return_pct"])
-        signal_code = int(row["signal"])
-        signal_label = row["signal_label"]
-
-        expected_price = None
-        if latest_close is not None:
-            expected_price = latest_close * (
-                1 + (predicted_return_pct / 100)
-            )
-
-        st.metric(
-            label="Predicted return",
-            value=format_pct(predicted_return_pct),
-            delta=format_pct(predicted_return_pct),
-        )
-
-        st.metric(
-            label="Expected price",
-            value=format_inr(expected_price),
-        )
-
-        signal_color = SIGNAL_COLOR_MAP.get(signal_code, "#6b7280")
-
-        st.markdown(
-            f"""
-            <div style="
-                display: inline-block;
-                color: white;
-                background-color: {signal_color};
-                padding: 7px 12px;
-                border-radius: 8px;
-                font-weight: 700;
-                margin-top: 6px;
-                margin-bottom: 6px;
-            ">
-                {signal_label}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.caption(
-            f"Prediction date: {row['signal_date'].strftime('%d %b %Y')}"
-        )
-        st.caption(
-            f"Model: {row['model_name']} ({row['model_version']})"
-        )
 
 
 def create_return_comparison_chart(
@@ -1062,9 +1100,10 @@ def create_return_comparison_chart(
     figure.update_layout(
         title="Predicted Return by Horizon",
         template="plotly_white",
-        height=350,
+        height=340,
+        font=dict(family="Inter, Segoe UI, sans-serif", size=12),
         yaxis_title="Predicted return (%)",
-        xaxis_title="Prediction horizon",
+        xaxis_title="Horizon",
         margin=dict(l=10, r=10, t=60, b=10),
     )
 
@@ -1072,94 +1111,478 @@ def create_return_comparison_chart(
 
 
 # ---------------------------------------------------------------------
-# Main app
+# Component: prediction card
 # ---------------------------------------------------------------------
-def main() -> None:
-    """Run the Streamlit dashboard."""
-    st.title("📈 Indian Stock Trader Dashboard")
-    st.caption(
-        "Local PostgreSQL-backed daily, weekly, and monthly "
-        "NSE equity prediction monitor"
-    )
+def show_prediction_card(
+    horizon: str,
+    row: pd.Series | None,
+    latest_close: float | None,
+) -> None:
+    """Render one daily/weekly/monthly prediction card."""
+    config = HORIZON_CONFIG[horizon]
 
-    # Sidebar
-    with st.sidebar:
-        st.header("Controls")
+    with st.container(border=True):
+        st.markdown(f"**{config['label']}**")
+        st.caption(config["sub_label"])
 
-        try:
-            symbols = load_symbols()
-        except Exception as exc:
-            st.error("Unable to load symbols from PostgreSQL.")
-            st.exception(exc)
-            st.stop()
-
-        if not symbols:
-            st.warning(
-                "No symbols found in market_ohlcv. "
-                "Run your data-ingestion job first."
+        if row is None:
+            st.info(
+                f"No {config['label'].lower()} prediction stored yet."
             )
-            st.stop()
+            return
 
-        selected_symbol = st.selectbox(
-            "Select NSE symbol",
-            options=symbols,
-            index=0,
+        predicted_return_pct = float(row["predicted_return_pct"])
+        signal_code = int(row["signal"])
+        signal_label = row["signal_label"]
+
+        expected_price = None
+        if latest_close is not None:
+            expected_price = latest_close * (
+                1 + (predicted_return_pct / 100)
+            )
+
+        st.metric(
+            label="Predicted return",
+            value=format_pct(predicted_return_pct),
         )
 
-        chart_days = st.selectbox(
-            "Chart history",
-            options=[60, 90, 180, 365],
-            index=2,
-            format_func=lambda value: f"Last {value} trading days",
+        st.metric(
+            label="Expected price",
+            value=format_inr(expected_price),
         )
 
-        if st.button("🔄 Refresh dashboard", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-
-        st.divider()
-
-        st.caption("Signal legend")
-        st.success("BUY = Positive return exceeds model threshold")
-        st.warning("HOLD = No high-conviction action")
-        st.error("SELL / EXIT = Avoid or exit a delivery holding")
-
-        st.divider()
+        st.markdown(
+            signal_pill_html(signal_code, signal_label),
+            unsafe_allow_html=True,
+        )
 
         st.caption(
-            "This dashboard is for research and paper-trading workflows. "
-            "It is not financial advice."
+            f"As of {row['signal_date'].strftime('%d %b %Y')} · "
+            f"{row['model_name']} ({row['model_version']})"
         )
 
-    # Load current selected-symbol data
+
+# ---------------------------------------------------------------------
+# Component: top raw BUY table
+# ---------------------------------------------------------------------
+def show_top_buy_table(
+    horizon: str,
+    latest_prices_df: pd.DataFrame,
+) -> None:
+    """Display the Top 10 latest BUY recommendations for a horizon."""
+    horizon_info = HORIZON_CONFIG[horizon]
+
+    top_buy_df = load_top_buy_predictions(
+        horizon=horizon,
+        limit_rows=10,
+    )
+
+    if top_buy_df.empty:
+        st.info(
+            f"No active BUY signals currently exist for "
+            f"{horizon_info['label'].lower()} predictions."
+        )
+        return
+
+    prices = latest_prices_df[["symbol", "close"]].copy()
+    prices = prices.rename(columns={"close": "latest_close_inr"})
+
+    display_df = top_buy_df.merge(prices, on="symbol", how="left")
+
+    display_df["expected_price_inr"] = (
+        display_df["latest_close_inr"]
+        * (1 + display_df["predicted_return"])
+    )
+
+    display_df = display_df.sort_values(
+        "predicted_return",
+        ascending=False,
+    ).reset_index(drop=True)
+
+    display_df.index = display_df.index + 1
+    display_df.index.name = "Rank"
+
+    display_df["signal_date"] = display_df[
+        "signal_date"
+    ].dt.strftime("%d %b %Y")
+
+    display_df["latest_close_inr"] = display_df[
+        "latest_close_inr"
+    ].map(format_inr)
+
+    display_df["expected_price_inr"] = display_df[
+        "expected_price_inr"
+    ].map(format_inr)
+
+    display_df["predicted_return_pct"] = display_df[
+        "predicted_return_pct"
+    ].map(format_pct)
+
+    display_df = display_df[
+        [
+            "symbol",
+            "signal_date",
+            "latest_close_inr",
+            "predicted_return_pct",
+            "expected_price_inr",
+            "model_name",
+            "model_version",
+        ]
+    ].rename(
+        columns={
+            "symbol": "Symbol",
+            "signal_date": "Prediction Date",
+            "latest_close_inr": "Latest Close",
+            "predicted_return_pct": "Predicted Return",
+            "expected_price_inr": "Expected Price",
+            "model_name": "Model",
+            "model_version": "Version",
+        }
+    )
+
+    styled = display_df.style.map(
+        _style_return,
+        subset=["Predicted Return"],
+    )
+
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        hide_index=False,
+    )
+
+    st.caption(
+        "Ranked by model-predicted return among the latest active BUY "
+        "signals. Research ranking, not financial advice."
+    )
+
+
+# ---------------------------------------------------------------------
+# Component: top eligible buys (filtered shortlist)
+# ---------------------------------------------------------------------
+def show_top_eligible_buys() -> None:
+    """Show only stocks that passed all nine entry checks."""
+    eligible_df = load_top_eligible_buys(limit_rows=10)
+
+    section_title(
+        "Paper-trading shortlist",
+        "Top 10 Eligible BUY Candidates",
+        "Stocks that cleared every entry-engine check: weekly forecast, "
+        "cost/error buffer, monthly confirmation, SMA-50 trend, market "
+        "regime, liquidity, duplicate-position, exposure limits, and "
+        "ATR-based sizing.",
+    )
+
+    if eligible_df.empty:
+        st.warning(
+            "No stocks currently qualify as ELIGIBLE_BUY. This can be "
+            "normal when the market is bearish, signals are weak, or "
+            "liquidity/trend filters block entries."
+        )
+        st.info(
+            "Run these jobs in order after market data is refreshed:\n\n"
+            "1. `python predict_weekly_monthly.py`\n\n"
+            "2. `python entry_decision_engine.py`\n\n"
+            "3. Refresh this dashboard."
+        )
+        return
+
+    display_df = eligible_df.copy()
+
+    display_df["weekly_return_pct"] = (
+        display_df["weekly_predicted_return"] * 100
+    )
+    display_df["monthly_return_pct"] = (
+        display_df["monthly_predicted_return"] * 100
+    )
+    display_df["stop_distance_pct"] = (
+        (
+            display_df["entry_price"]
+            - display_df["initial_stop_price"]
+        )
+        / display_df["entry_price"]
+        * 100
+    )
+
+    display_df = display_df.sort_values(
+        by=["weekly_predicted_return", "monthly_predicted_return"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
+
+    display_df.index = display_df.index + 1
+    display_df.index.name = "Rank"
+
+    display_df["decision_date"] = display_df[
+        "decision_date"
+    ].dt.strftime("%d %b %Y")
+
+    for column in [
+        "latest_close",
+        "entry_price",
+        "initial_stop_price",
+        "suggested_position_value",
+        "average_traded_value_inr",
+    ]:
+        display_df[column] = display_df[column].map(format_inr)
+
+    for column in [
+        "weekly_return_pct",
+        "monthly_return_pct",
+        "stop_distance_pct",
+    ]:
+        display_df[column] = display_df[column].map(format_pct)
+
+    display_df["suggested_quantity"] = display_df[
+        "suggested_quantity"
+    ].map(lambda value: f"{int(value):,}")
+
+    display_df["market_regime"] = display_df[
+        "market_regime"
+    ].fillna("UNKNOWN")
+    display_df["sector"] = display_df["sector"].fillna("UNKNOWN")
+
+    display_df = display_df[
+        [
+            "symbol",
+            "decision_date",
+            "sector",
+            "market_regime",
+            "latest_close",
+            "weekly_return_pct",
+            "monthly_return_pct",
+            "entry_price",
+            "initial_stop_price",
+            "stop_distance_pct",
+            "suggested_quantity",
+            "suggested_position_value",
+            "average_traded_value_inr",
+            "model_name",
+            "model_version",
+        ]
+    ].rename(
+        columns={
+            "symbol": "Symbol",
+            "decision_date": "Decision Date",
+            "sector": "Sector",
+            "market_regime": "Market Regime",
+            "latest_close": "Latest Close",
+            "weekly_return_pct": "Weekly Forecast",
+            "monthly_return_pct": "Monthly Forecast",
+            "entry_price": "Suggested Entry",
+            "initial_stop_price": "Initial Stop",
+            "stop_distance_pct": "Stop Distance",
+            "suggested_quantity": "Suggested Qty",
+            "suggested_position_value": "Position Value",
+            "average_traded_value_inr": "20D Avg Traded Value",
+            "model_name": "Model",
+            "model_version": "Version",
+        }
+    )
+
+    styled = display_df.style.map(
+        _style_return,
+        subset=["Weekly Forecast", "Monthly Forecast"],
+    )
+
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        hide_index=False,
+        height=420,
+    )
+
+    st.caption(
+        "Suggested Entry is the latest close used by the research "
+        "engine, not a guaranteed executable price. Initial Stop is "
+        "ATR-based. Suggested quantity is a paper-trading allocation."
+    )
+
+
+# ---------------------------------------------------------------------
+# Tab: Market Overview
+# ---------------------------------------------------------------------
+def render_raw_signals() -> None:
+    """Tab 1 — unfiltered market-wide raw model BUY rankings."""
+    section_title(
+        "Unfiltered model output",
+        "Top 10 Raw Model BUY Signals",
+        "Straight model signals before market regime, liquidity, trend, "
+        "sector limits, positions, or risk sizing are applied. See the "
+        "Entry Decisions tab for the filtered paper-trading shortlist.",
+    )
+
+    try:
+        latest_prices_df = load_latest_prices()
+    except Exception as exc:
+        st.error("Could not load latest prices for rankings.")
+        st.exception(exc)
+        latest_prices_df = pd.DataFrame(
+            columns=["symbol", "date", "close"]
+        )
+
+    daily_tab, weekly_tab, monthly_tab = st.tabs([
+        "Daily · 1D",
+        "Weekly · 5D",
+        "Monthly · 20D",
+    ])
+
+    with daily_tab:
+        show_top_buy_table("daily_1d", latest_prices_df)
+    with weekly_tab:
+        show_top_buy_table("weekly_5d", latest_prices_df)
+    with monthly_tab:
+        show_top_buy_table("monthly_20d", latest_prices_df)
+
+
+# ---------------------------------------------------------------------
+# Tab: Entry Decisions
+# ---------------------------------------------------------------------
+def render_entry_decisions(selected_symbol: str) -> None:
+    """Tab 2 — eligible-buy shortlist plus the selected-symbol decision."""
+    # Market-wide filtered shortlist.
+    try:
+        show_top_eligible_buys()
+    except Exception as exc:
+        st.error(
+            "Could not load final entry decisions. "
+            "Run entry_decision_engine.py first."
+        )
+        st.exception(exc)
+
+    st.divider()
+
+    # Selected-symbol final entry decision.
+    section_title(
+        "Selected symbol",
+        f"Entry Decision — {selected_symbol}",
+    )
+
+    try:
+        entry_decision_df = load_latest_entry_decision(
+            symbol=selected_symbol,
+        )
+    except Exception as exc:
+        st.error("Could not load the entry decision for this symbol.")
+        st.exception(exc)
+        return
+
+    if entry_decision_df.empty:
+        st.info(
+            "No final entry decision exists for this symbol. Run "
+            "`python entry_decision_engine.py` after generating weekly "
+            "and monthly predictions."
+        )
+        return
+
+    decision = entry_decision_df.iloc[0]
+    status = decision["entry_status"]
+
+    if status == "ELIGIBLE_BUY":
+        st.success(
+            f"Final decision: ELIGIBLE BUY — {selected_symbol} "
+            "passed all entry checks."
+        )
+    elif status == "WAIT_DAILY_TIMING":
+        st.info(
+            f"Final decision: WAIT — {selected_symbol} clears the "
+            "weekly/monthly thesis, but the daily signal suggests "
+            "waiting for better immediate timing."
+        )
+    else:
+        st.warning(
+            f"Final decision: BLOCKED — {selected_symbol} is not "
+            "eligible for a new entry."
+        )
+
+    d_left, d_mid, d_right, d_far = st.columns(4)
+    d_left.metric("Final status", status)
+    d_mid.metric(
+        "Suggested quantity",
+        f"{int(decision['suggested_quantity']):,}",
+    )
+    d_right.metric(
+        "Suggested entry",
+        format_inr(decision["entry_price"]),
+    )
+    d_far.metric(
+        "Initial stop",
+        format_inr(decision["initial_stop_price"]),
+    )
+
+    # Horizon signal pills (daily is the timing gate)
+    st.markdown("**Model signals by horizon**")
+    pill_daily, pill_weekly, pill_monthly = st.columns(3)
+
+    def _horizon_pill(column, label, signal_col, return_col):
+        raw = decision.get(signal_col)
+        ret = decision.get(return_col)
+        with column:
+            if pd.isna(raw):
+                st.markdown(
+                    f"{label}: "
+                    + signal_pill_html(0, "N/A"),
+                    unsafe_allow_html=True,
+                )
+            else:
+                code = int(raw)
+                st.markdown(
+                    f"{label}: "
+                    + signal_pill_html(
+                        code, SIGNAL_MAP.get(code, "UNKNOWN")
+                    ),
+                    unsafe_allow_html=True,
+                )
+            if ret is not None and not pd.isna(ret):
+                st.caption(f"Forecast: {format_pct(float(ret) * 100)}")
+
+    _horizon_pill(
+        pill_daily, "Daily",
+        "raw_daily_signal", "daily_predicted_return",
+    )
+    _horizon_pill(
+        pill_weekly, "Weekly",
+        "raw_weekly_signal", "weekly_predicted_return",
+    )
+    _horizon_pill(
+        pill_monthly, "Monthly",
+        "raw_monthly_signal", "monthly_predicted_return",
+    )
+
+    st.caption(
+        f"Market regime: **{decision['market_regime']}** · "
+        f"Sector: **{decision['sector']}** · Decision date: "
+        f"{pd.to_datetime(decision['decision_date']).strftime('%d %b %Y')}"
+    )
+
+    if status not in ("ELIGIBLE_BUY", "WAIT_DAILY_TIMING"):
+        rejection_text = decision.get(
+            "rejection_reasons",
+            "No rejection reason stored.",
+        )
+        st.error(f"Entry blocked because: `{rejection_text}`")
+
+
+# ---------------------------------------------------------------------
+# Tab: Stock Analysis
+# ---------------------------------------------------------------------
+def render_stock_analysis(
+    selected_symbol: str,
+    chart_days: int,
+) -> None:
+    """Tab 3 — single-symbol deep dive (price, forecasts, history)."""
     try:
         price_df = load_price_data(
             symbol=selected_symbol,
             days=max(365, chart_days + 60),
         )
-
-        predictions_df = load_latest_predictions(
-            symbol=selected_symbol,
-        )
-
-        history_df = load_prediction_history(
-            symbol=selected_symbol,
-        )
-
-        entry_decision_df = load_latest_entry_decision(
-            symbol=selected_symbol,
-        )
-
+        predictions_df = load_latest_predictions(symbol=selected_symbol)
+        history_df = load_prediction_history(symbol=selected_symbol)
     except Exception as exc:
         import traceback
 
         st.error("Could not load PostgreSQL data.")
         st.exception(exc)
-
-        st.code(
-            traceback.format_exc(),
-            language="text",
-        )
+        st.code(traceback.format_exc(), language="text")
         st.stop()
 
     if price_df.empty:
@@ -1184,6 +1607,11 @@ def main() -> None:
     )
 
     # Header metrics
+    section_title(
+        "Selected symbol",
+        f"{selected_symbol}",
+    )
+
     left, middle, right, far_right = st.columns(4)
 
     left.metric(
@@ -1191,175 +1619,45 @@ def main() -> None:
         format_inr(latest_close),
         format_pct(daily_change_pct),
     )
-
     middle.metric(
         "Last market date",
         latest_price_row["date"].strftime("%d %b %Y"),
     )
-
     right.metric(
         "Stored price rows",
         f"{len(price_df):,}",
     )
-
     far_right.metric(
         "Prediction records",
         f"{len(history_df):,}",
     )
 
-
-    # -------------------------------------------------------------
-    # Market-wide Top 10 BUY rankings
-    # -------------------------------------------------------------
-    st.divider()
-    st.header("📊 Raw Model BUY Signals")
-    st.caption(
-    "These are unfiltered model signals. They do not yet account for "
-    "market regime, liquidity, trend, sector limits, existing positions, "
-    "or risk-based position sizing. Use the Top 10 Eligible BUY Candidates "
-    "section above for paper-trading review."
-)
-
-    try:
-        latest_prices_df = load_latest_prices()
-    except Exception as exc:
-        st.error("Could not load latest prices for market-wide rankings.")
-        st.exception(exc)
-        latest_prices_df = pd.DataFrame(
-            columns=["symbol", "date", "close"]
-        )
-
-    daily_tab, weekly_tab, monthly_tab = st.tabs([
-        "Daily — 1 Trading Day",
-        "Weekly — 5 Trading Days",
-        "Monthly — 20 Trading Days",
-    ])
-
-    with daily_tab:
-        show_top_buy_table(
-            horizon="daily_1d",
-            latest_prices_df=latest_prices_df,
-        )
-
-    with weekly_tab:
-        show_top_buy_table(
-            horizon="weekly_5d",
-            latest_prices_df=latest_prices_df,
-        )
-
-    with monthly_tab:
-        show_top_buy_table(
-            horizon="monthly_20d",
-            latest_prices_df=latest_prices_df,
-        )
-
-    st.divider()
-
-        # -------------------------------------------------------------
-    # Final filtered paper-trading shortlist
-    # -------------------------------------------------------------
-    st.divider()
-
-    try:
-        show_top_eligible_buys()
-    except Exception as exc:
-        st.error(
-            "Could not load final entry decisions. "
-            "Run entry_decision_engine.py first."
-        )
-        st.exception(exc)
-
     # Prediction cards
-    st.subheader(f"{selected_symbol} — Current Model View")
-
-        # -------------------------------------------------------------
-    # Final entry decision for selected stock
-    # -------------------------------------------------------------
-    if entry_decision_df.empty:
-        st.info(
-            "No final entry decision exists for this symbol. "
-            "Run `python entry_decision_engine.py` after generating "
-            "weekly and monthly predictions."
-        )
-    else:
-        decision = entry_decision_df.iloc[0]
-
-        if decision["entry_status"] == "ELIGIBLE_BUY":
-            st.success(
-                f"✅ Final decision: ELIGIBLE BUY — "
-                f"{selected_symbol} passed all nine entry checks."
-            )
-        else:
-            st.warning(
-                f"⛔ Final decision: BLOCKED — "
-                f"{selected_symbol} is not eligible for a new entry."
-            )
-
-        decision_left, decision_middle, decision_right, decision_far_right = st.columns(4)
-
-        decision_left.metric(
-            "Final status",
-            decision["entry_status"],
-        )
-
-        decision_middle.metric(
-            "Suggested quantity",
-            f"{int(decision['suggested_quantity']):,}",
-        )
-
-        decision_right.metric(
-            "Suggested entry",
-            format_inr(decision["entry_price"]),
-        )
-
-        decision_far_right.metric(
-            "Initial stop",
-            format_inr(decision["initial_stop_price"]),
-        )
-
-        st.caption(
-            f"Market regime: **{decision['market_regime']}** | "
-            f"Sector: **{decision['sector']}** | "
-            f"Decision date: "
-            f"{pd.to_datetime(decision['decision_date']).strftime('%d %b %Y')}"
-        )
-
-        if decision["entry_status"] != "ELIGIBLE_BUY":
-            rejection_text = decision.get(
-                "rejection_reasons",
-                "No rejection reason stored.",
-            )
-
-            st.error(
-                f"Entry blocked because: `{rejection_text}`"
-            )
+    st.divider()
+    st.markdown("#### Model View by Horizon")
 
     daily_col, weekly_col, monthly_col = st.columns(3)
-
     with daily_col:
         show_prediction_card(
-            horizon="daily_1d",
-            row=get_prediction_row(predictions_df, "daily_1d"),
-            latest_close=latest_close,
+            "daily_1d",
+            get_prediction_row(predictions_df, "daily_1d"),
+            latest_close,
         )
-
     with weekly_col:
         show_prediction_card(
-            horizon="weekly_5d",
-            row=get_prediction_row(predictions_df, "weekly_5d"),
-            latest_close=latest_close,
+            "weekly_5d",
+            get_prediction_row(predictions_df, "weekly_5d"),
+            latest_close,
         )
-
     with monthly_col:
         show_prediction_card(
-            horizon="monthly_20d",
-            row=get_prediction_row(predictions_df, "monthly_20d"),
-            latest_close=latest_close,
+            "monthly_20d",
+            get_prediction_row(predictions_df, "monthly_20d"),
+            latest_close,
         )
 
-    # Forecast chart
+    # Chart + forecast comparison
     st.divider()
-
     chart_col, signal_col = st.columns([2, 1])
 
     with chart_col:
@@ -1374,17 +1672,12 @@ def main() -> None:
 
     with signal_col:
         return_chart = create_return_comparison_chart(predictions_df)
-
         if return_chart is not None:
-            st.plotly_chart(
-                return_chart,
-                use_container_width=True,
-            )
+            st.plotly_chart(return_chart, use_container_width=True)
         else:
             st.info("No prediction records are available yet.")
 
-        st.markdown("### Latest stored predictions")
-
+        st.markdown("##### Latest stored predictions")
         if predictions_df.empty:
             st.info("Run your prediction job to populate model_signals.")
         else:
@@ -1408,42 +1701,36 @@ def main() -> None:
                 }
             )
 
-            signal_table["Return %"] = signal_table[
-                "Return %"
-            ].map(format_pct)
-
+            signal_table["Return %"] = signal_table["Return %"].map(
+                format_pct
+            )
             signal_table["Prediction date"] = pd.to_datetime(
                 signal_table["Prediction date"]
             ).dt.strftime("%d %b %Y")
 
+            styled_signals = signal_table.style.map(
+                _style_return, subset=["Return %"]
+            ).map(_style_signal, subset=["Signal"])
+
             st.dataframe(
-                signal_table,
+                styled_signals,
                 use_container_width=True,
                 hide_index=True,
             )
 
-    # Price history / data table
+    # Recent price data
     st.divider()
-
-    st.subheader("Recent Price Data")
+    st.markdown("#### Recent Price Data")
 
     display_prices = price_df.tail(30).copy()
-
     display_prices["date"] = display_prices["date"].dt.strftime(
         "%d %b %Y"
     )
-
     for column in ["open", "high", "low", "close"]:
-        display_prices[column] = display_prices[column].map(
-            format_inr
-        )
-
+        display_prices[column] = display_prices[column].map(format_inr)
     display_prices["volume"] = display_prices["volume"].map(
-        lambda value: f"{value:,.0f}"
-        if pd.notna(value)
-        else "—"
+        lambda value: f"{value:,.0f}" if pd.notna(value) else "—"
     )
-
     display_prices = display_prices.rename(
         columns={
             "date": "Date",
@@ -1461,7 +1748,7 @@ def main() -> None:
         hide_index=True,
     )
 
-    # History
+    # History audit trail
     with st.expander("Prediction history and audit trail"):
         if history_df.empty:
             st.info(
@@ -1469,15 +1756,12 @@ def main() -> None:
             )
         else:
             display_history = history_df.copy()
-
             display_history["signal_date"] = display_history[
                 "signal_date"
             ].dt.strftime("%d %b %Y")
-
             display_history["created_at"] = display_history[
                 "created_at"
             ].dt.strftime("%d %b %Y %H:%M")
-
             display_history["predicted_return_pct"] = display_history[
                 "predicted_return_pct"
             ].map(format_pct)
@@ -1504,14 +1788,381 @@ def main() -> None:
                 }
             )
 
+            styled_history = display_history.style.map(
+                _style_return, subset=["Predicted Return"]
+            ).map(_style_signal, subset=["Signal"])
+
             st.dataframe(
-                display_history,
+                styled_history,
                 use_container_width=True,
                 hide_index=True,
             )
 
-    st.divider()
 
+# ---------------------------------------------------------------------
+# Tab: Paper Portfolio
+# ---------------------------------------------------------------------
+def render_paper_portfolio() -> None:
+    """Tab 4 — paper portfolio tracking (research only)."""
+    section_title(
+        "Research only",
+        "Paper Portfolio",
+        "Portfolio tracking based on stored daily closes. "
+        "No live broker orders are sent.",
+    )
+
+    snapshot_df = load_portfolio_snapshot()
+    open_positions_df = load_open_paper_positions()
+    closed_positions_df = load_closed_paper_positions()
+    history_df = load_portfolio_history()
+
+    if snapshot_df.empty:
+        st.info(
+            "No paper portfolio snapshot exists yet. Run:\n\n"
+            "`python portfolio_engine.py`"
+        )
+        return
+
+    snapshot = snapshot_df.iloc[0]
+
+    metric_1, metric_2, metric_3, metric_4, metric_5 = st.columns(5)
+
+    metric_1.metric(
+        "Portfolio Value",
+        format_inr(snapshot["total_value_inr"]),
+        format_inr(snapshot["daily_pnl_inr"]),
+    )
+    metric_2.metric(
+        "Cash Available",
+        format_inr(snapshot["cash_inr"]),
+    )
+    metric_3.metric(
+        "Holdings Value",
+        format_inr(snapshot["holdings_value_inr"]),
+    )
+    metric_4.metric(
+        "Open Positions",
+        int(snapshot["open_positions"]),
+    )
+    metric_5.metric(
+        "Drawdown",
+        format_pct(snapshot["drawdown_pct"]),
+    )
+
+    # Portfolio value trend
+    if not history_df.empty:
+        value_chart = go.Figure()
+        value_chart.add_trace(
+            go.Scatter(
+                x=history_df["snapshot_date"],
+                y=history_df["total_value_inr"],
+                mode="lines",
+                name="Portfolio Value",
+                line=dict(color="#2563eb", width=3),
+                fill="tozeroy",
+                fillcolor="rgba(37, 99, 235, 0.08)",
+            )
+        )
+        value_chart.update_layout(
+            title="Paper Portfolio Value",
+            template="plotly_white",
+            height=340,
+            font=dict(family="Inter, Segoe UI, sans-serif", size=12),
+            yaxis_title="Value (INR)",
+            xaxis_title="Date",
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
+        st.plotly_chart(value_chart, use_container_width=True)
+
+    left_col, right_col = st.columns([2, 1])
+
+    with left_col:
+        st.markdown("#### Open Positions")
+
+        if open_positions_df.empty:
+            st.info("No open paper positions.")
+        else:
+            display_df = open_positions_df.copy()
+
+            display_df["entry_date"] = pd.to_datetime(
+                display_df["entry_date"]
+            ).dt.strftime("%d %b %Y")
+
+            for column in [
+                "entry_price",
+                "initial_stop_price",
+                "trailing_stop_price",
+                "highest_price_since_entry",
+                "current_price",
+                "market_value",
+                "unrealized_pnl_inr",
+            ]:
+                display_df[column] = display_df[column].map(format_inr)
+
+            display_df["unrealized_pnl_pct"] = display_df[
+                "unrealized_pnl_pct"
+            ].map(format_pct)
+
+            display_df = display_df.rename(
+                columns={
+                    "symbol": "Symbol",
+                    "sector": "Sector",
+                    "entry_date": "Entry Date",
+                    "entry_price": "Entry",
+                    "quantity": "Qty",
+                    "initial_stop_price": "Initial Stop",
+                    "trailing_stop_price": "Trailing Stop",
+                    "highest_price_since_entry": "Highest",
+                    "current_price": "Current",
+                    "market_value": "Market Value",
+                    "unrealized_pnl_inr": "Unrealized P&L",
+                    "unrealized_pnl_pct": "P&L %",
+                }
+            )
+
+            display_df = display_df[
+                [
+                    "Symbol",
+                    "Sector",
+                    "Entry Date",
+                    "Entry",
+                    "Qty",
+                    "Initial Stop",
+                    "Trailing Stop",
+                    "Current",
+                    "Market Value",
+                    "Unrealized P&L",
+                    "P&L %",
+                ]
+            ]
+
+            styled_open = display_df.style.map(
+                _style_return, subset=["P&L %"]
+            )
+
+            st.dataframe(
+                styled_open,
+                use_container_width=True,
+                hide_index=True,
+                height=360,
+            )
+
+    with right_col:
+        st.markdown("#### Exposure")
+
+        exposure_pct = float(
+            snapshot["gross_exposure_pct"] or 0
+        ) * 100
+
+        st.progress(
+            min(max(exposure_pct / 100, 0.0), 1.0),
+            text=f"Gross equity exposure: {exposure_pct:.1f}%",
+        )
+
+        st.metric(
+            "Total P&L",
+            format_inr(snapshot["total_pnl_inr"]),
+        )
+
+        st.caption(
+            "Exposure and P&L are paper-trading marks based on the "
+            "latest stored daily closes."
+        )
+
+    st.divider()
+    st.markdown("#### Recent Closed Positions")
+
+    if closed_positions_df.empty:
+        st.info("No closed paper positions yet.")
+    else:
+        closed_df = closed_positions_df.copy()
+
+        for date_col in ["entry_date", "exit_date"]:
+            closed_df[date_col] = pd.to_datetime(
+                closed_df[date_col]
+            ).dt.strftime("%d %b %Y")
+
+        for amount_col in [
+            "entry_price",
+            "exit_price",
+            "realized_pnl_inr",
+        ]:
+            closed_df[amount_col] = closed_df[amount_col].map(format_inr)
+
+        closed_df["realized_pnl_pct"] = closed_df[
+            "realized_pnl_pct"
+        ].map(format_pct)
+
+        closed_df = closed_df.rename(
+            columns={
+                "symbol": "Symbol",
+                "sector": "Sector",
+                "entry_date": "Entry Date",
+                "entry_price": "Entry",
+                "quantity": "Qty",
+                "exit_date": "Exit Date",
+                "exit_price": "Exit",
+                "realized_pnl_inr": "Realized P&L",
+                "realized_pnl_pct": "P&L %",
+                "exit_reason": "Exit Reason",
+            }
+        )
+
+        styled_closed = closed_df.style.map(
+            _style_return, subset=["P&L %"]
+        )
+
+        st.dataframe(
+            styled_closed,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # Transaction log
+    st.divider()
+    st.markdown("#### Transaction Log")
+
+    transactions_df = load_paper_transactions()
+
+    if transactions_df.empty:
+        st.info("No paper transactions recorded yet.")
+    else:
+        txn_df = transactions_df.copy()
+
+        txn_df["transaction_date"] = txn_df[
+            "transaction_date"
+        ].dt.strftime("%d %b %Y")
+
+        for amount_col in [
+            "price",
+            "gross_value",
+            "estimated_cost_inr",
+            "net_value",
+        ]:
+            txn_df[amount_col] = txn_df[amount_col].map(format_inr)
+
+        txn_df = txn_df.rename(
+            columns={
+                "transaction_date": "Date",
+                "symbol": "Symbol",
+                "transaction_type": "Type",
+                "quantity": "Qty",
+                "price": "Price",
+                "gross_value": "Gross Value",
+                "estimated_cost_inr": "Est. Cost",
+                "net_value": "Net Value",
+                "reason": "Reason",
+                "source": "Source",
+            }
+        )
+
+        def _style_txn_type(value: str) -> str:
+            if value == "BUY":
+                return "color: #16a34a; font-weight: 700;"
+            if value == "SELL":
+                return "color: #dc2626; font-weight: 700;"
+            return ""
+
+        styled_txn = txn_df.style.map(_style_txn_type, subset=["Type"])
+
+        st.dataframe(
+            styled_txn,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+# ---------------------------------------------------------------------
+# Main app
+# ---------------------------------------------------------------------
+def main() -> None:
+    """Run the Streamlit dashboard."""
+    inject_theme()
+
+    # Sidebar
+    with st.sidebar:
+        st.markdown("### Controls")
+
+        try:
+            symbols = load_symbols()
+        except Exception as exc:
+            st.error("Unable to load symbols from PostgreSQL.")
+            st.exception(exc)
+            st.stop()
+
+        if not symbols:
+            st.warning(
+                "No symbols found in market_ohlcv. "
+                "Run your data-ingestion job first."
+            )
+            st.stop()
+
+        selected_symbol = st.selectbox(
+            "NSE symbol",
+            options=symbols,
+            index=0,
+        )
+
+        chart_days = st.selectbox(
+            "Chart history",
+            options=[60, 90, 180, 365],
+            index=2,
+            format_func=lambda value: f"Last {value} trading days",
+        )
+
+        if st.button("Refresh data", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+        st.divider()
+
+        st.markdown("**Signal legend**")
+        st.markdown(
+            signal_pill_html(1, "BUY")
+            + " Positive return above threshold",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            signal_pill_html(0, "HOLD") + " No high-conviction action",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            signal_pill_html(-1, "SELL / EXIT")
+            + " Avoid or exit a holding",
+            unsafe_allow_html=True,
+        )
+
+        st.divider()
+        st.caption(
+            "For research and paper-trading workflows. "
+            "Not financial advice."
+        )
+
+    # Header
+    render_header(len(symbols))
+
+    # Top-level tabs
+    raw_tab, entry_tab, analysis_tab, portfolio_tab = st.tabs([
+        "Raw Signals",
+        "Entry Decisions",
+        "Stock Analysis",
+        "Paper Portfolio",
+    ])
+
+    with raw_tab:
+        render_raw_signals()
+
+    with entry_tab:
+        render_entry_decisions(selected_symbol)
+
+    with analysis_tab:
+        render_stock_analysis(selected_symbol, chart_days)
+
+    with portfolio_tab:
+        render_paper_portfolio()
+
+    # Global footer
+    st.divider()
     st.caption(
         "Important: Predictions are model estimates. Validate weekly "
         "signals after five future NSE sessions and monthly signals "

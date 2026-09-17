@@ -3,12 +3,17 @@
 ## Overview
 Complete end-to-end algorithmic trading system for Indian stock market (NSE/BSE) with:
 - **Full Nifty 500 universe** ingested from Yahoo Finance India into PostgreSQL
-- **Weekly and monthly prediction** using ensemble ML models (LSTM + XGBoost)
+- **Daily, weekly, and monthly prediction** using ensemble ML models (LSTM + XGBoost)
 - **Data ingestion** from Yahoo Finance India, persisted in PostgreSQL
 - **40+ technical indicators** for feature engineering
-- **Comprehensive backtesting** with realistic Indian market costs
-- **Risk management** with position sizing, stop-loss, and VaR calculations
-- **Streamlit dashboard** for browsing predictions per symbol
+- **Entry decision engine** — a multi-condition filter (trend, market regime,
+  liquidity, exposure limits, ATR sizing) with a daily timing gate
+- **Exit decision engine** — stop-loss, trailing stop, model-reversal, and
+  time-stop rules for open paper positions
+- **Paper portfolio engine** — marks positions to market, opens eligible
+  buys, logs transactions, and saves daily snapshots (no live orders)
+- **Streamlit dashboard** with four tabs: raw signals, entry decisions,
+  per-symbol analysis, and paper portfolio
 
 ## System Architecture
 
@@ -30,15 +35,29 @@ Complete end-to-end algorithmic trading system for Indian stock market (NSE/BSE)
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│               Trading Engine                                 │
-│  Signal Generation → Backtesting → Risk Management          │
+│               Decision Engines                               │
+│  Entry engine (filters + daily timing gate) →               │
+│  Exit engine (stops, reversals, time stops) →               │
+│  Paper portfolio engine (mark-to-market, snapshots)         │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                 Presentation Layer                           │
-│  Streamlit Dashboard (reads model_signals + market_ohlcv)   │
+│  Streamlit Dashboard — Raw Signals · Entry Decisions ·      │
+│  Stock Analysis · Paper Portfolio                           │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### PostgreSQL tables
+
+| Table | Written by | Purpose |
+|-------|-----------|---------|
+| `market_ohlcv` | `data_ingestion.py`, `refresh_market_data.py` | Daily OHLCV price history |
+| `model_signals` | `predict_weekly_monthly.py` | Daily/weekly/monthly model predictions |
+| `entry_decisions` | `entry_decision_engine.py` | Final entry verdict per symbol + inputs |
+| `portfolio_positions` | `portfolio_engine.py`, `exit_decision_engine.py` | Open and closed paper positions |
+| `portfolio_transactions` | `portfolio_engine.py`, `exit_decision_engine.py` | BUY/SELL log with estimated costs |
+| `portfolio_daily_snapshots` | `portfolio_engine.py` | Daily portfolio value / exposure / P&L |
 
 ## Quick Start
 
@@ -113,13 +132,21 @@ python data_ingestion.py --limit 20
 # Then ingest the full Nifty 500 universe (this takes a while):
 python data_ingestion.py --period 5y
 
-# Stage 2 — Train weekly + monthly models and write signals
+# Stage 2 — Train models and write daily/weekly/monthly signals
 # to the model_signals table and weekly_monthly_predictions.csv:
 python predict_weekly_monthly.py
 
-# Stage 3 — Launch the dashboard (reads whatever is in PostgreSQL):
+# Stage 3 — Run the decision engines (in this order):
+python entry_decision_engine.py    # final entry verdicts
+python exit_decision_engine.py     # close positions needing exit
+python portfolio_engine.py         # mark positions, open buys, snapshot
+
+# Stage 4 — Launch the dashboard (reads whatever is in PostgreSQL):
 python -m streamlit run streamlit_dashboard.py
 ```
+
+The `daily_pipeline.py` orchestrator runs stages 1–3 in the correct
+order for scheduled end-of-day updates (see the Task Scheduler section).
 
 #### `data_ingestion.py` options
 
@@ -130,7 +157,7 @@ python -m streamlit run streamlit_dashboard.py
 | `--batch-size` | `25` | Symbols fetched per PostgreSQL write |
 | `--sleep` | `1.0` | Seconds to pause between batches (rate-limit relief) |
 
-### 4. Notes on the Nifty 500 Universe
+### 5. Notes on the Nifty 500 Universe
 
 - The constituent list lives in `nifty500_symbols.py` as Yahoo `.NS`
   tickers, exposed via `config.NIFTY_500_SYMBOLS` in `settings.py`.
@@ -148,8 +175,14 @@ automatically after NSE close. The recommended schedule is **weekdays
 (Mon–Fri) at 6:00 PM**, which is after the 3:30 PM market close.
 
 The pipeline is driven by `run_daily_pipeline.ps1`, which calls
-`daily_pipeline.py` (incremental refresh → predictions → entry engine)
-and writes a timestamped log to `logs/`.
+`daily_pipeline.py` and writes a timestamped log to `logs/`. The
+orchestrator runs these steps in order:
+
+1. `refresh_market_data.py` — incremental OHLCV refresh
+2. `predict_weekly_monthly.py` — daily/weekly/monthly signals
+3. `entry_decision_engine.py` — final entry verdicts
+4. `exit_decision_engine.py` — close positions needing exit
+5. `portfolio_engine.py` — mark positions, open eligible buys, snapshot
 
 ### Before you schedule
 
@@ -264,16 +297,43 @@ indian_stock_trader/
 ├── database.py                 # PostgreSQL access layer
 ├── feature_engineering.py      # Technical indicators (40+)
 ├── ml_models.py                # LSTM + XGBoost ensemble
-├── predict_weekly_monthly.py   # Train models + write signals
+├── predict_weekly_monthly.py   # Train models + write daily/weekly/monthly signals
+├── entry_decision_engine.py    # Final entry-condition engine (+ daily timing gate)
+├── exit_decision_engine.py     # Exit rules for open paper positions
+├── portfolio_engine.py         # Paper portfolio: mark-to-market, open buys, snapshots
+├── execution_utils.py          # Shared execution/cost helpers
+├── refresh_market_data.py      # Incremental OHLCV refresh (daily)
+├── daily_pipeline.py           # Daily orchestrator (refresh → predict → entry → exit → portfolio)
 ├── verify_last_week.py         # Backtest-style forecast verification
 ├── backtester.py               # Backtesting engine
 ├── risk_management.py          # Risk management
 ├── trading_engine.py           # End-to-end orchestration example
-├── streamlit_dashboard.py      # Prediction dashboard
+├── streamlit_dashboard.py      # Streamlit dashboard (4 tabs)
+├── run_full_setup.ps1          # One-time full setup + dashboard launch
+├── run_daily_pipeline.ps1      # Task Scheduler wrapper for daily_pipeline.py
 ├── requirements.txt            # Dependencies
 ├── setup.py                    # Installation script
 └── README.md                   # This file
 ```
+
+## Dashboard Tabs
+
+The Streamlit dashboard (`streamlit_dashboard.py`) reads directly from
+PostgreSQL and is organized into four tabs. Pick a symbol and chart
+window from the sidebar.
+
+1. **Raw Signals** — Top 10 raw model BUY signals per horizon
+   (Daily / Weekly / Monthly), unfiltered by the entry rules.
+2. **Entry Decisions** — the Top 10 eligible-buy shortlist that cleared
+   every entry check, plus the selected symbol's final verdict with
+   daily/weekly/monthly signal pills. Statuses: `ELIGIBLE_BUY`,
+   `WAIT_DAILY_TIMING` (thesis ok, daily says wait), or `BLOCKED`.
+3. **Stock Analysis** — per-symbol deep dive: metrics, prediction cards,
+   candlestick chart with SMA 20/50, forecast comparison, price table,
+   and the prediction-history audit trail.
+4. **Paper Portfolio** — portfolio value trend, open/closed positions,
+   exposure, and the BUY/SELL transaction log. Populated by
+   `portfolio_engine.py`; empty states guide you if no data exists yet.
 
 ## Key Features
 
@@ -284,9 +344,12 @@ indian_stock_trader/
 - Full Nifty 500 symbol list included (`nifty500_symbols.py`)
 
 ### 2. Ensemble ML Models
-- **LSTM**: Captures time-series patterns for weekly prediction
-- **XGBoost**: Handles tabular features for monthly prediction
+- **Three horizons**: daily (1d), weekly (5d), and monthly (20d) forecasts
+- **LSTM**: Captures time-series patterns
+- **XGBoost**: Handles tabular features
 - **Dynamic weighting**: Models weighted by recent performance
+- **Daily as a timing gate**: the entry engine uses the daily signal to
+  delay otherwise-eligible entries (`WAIT_DAILY_TIMING`)
 
 ### 3. Comprehensive Features
 - 40+ technical indicators (TA-Lib)

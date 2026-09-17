@@ -81,7 +81,7 @@ class EntryDecisionEngine:
             FROM model_signals
             WHERE model_name = :model_name
               AND model_version = :model_version
-              AND prediction_horizon IN ('weekly_5d', 'monthly_20d')
+              AND prediction_horizon IN ('daily_1d','weekly_5d', 'monthly_20d')
             ORDER BY
                 symbol,
                 prediction_horizon,
@@ -423,6 +423,7 @@ class EntryDecisionEngine:
     def evaluate_symbol(
         self,
         symbol: str,
+        daily_prediction: pd.Series | None,
         weekly_prediction: pd.Series | None,
         monthly_prediction: pd.Series | None,
         market_regime: dict[str, Any],
@@ -432,6 +433,18 @@ class EntryDecisionEngine:
     ) -> dict[str, Any]:
         """Evaluate all nine entry conditions for one stock."""
         reasons = []
+
+        daily_return = (
+            float(daily_prediction["predicted_return"])
+            if daily_prediction is not None
+            else None
+        )
+
+        raw_daily_signal = (
+            int(daily_prediction["signal"])
+            if daily_prediction is not None
+            else 0
+        )
 
         weekly_return = (
             float(weekly_prediction["predicted_return"])
@@ -456,6 +469,17 @@ class EntryDecisionEngine:
             if monthly_prediction is not None
             else 0
         )
+
+        missing_horizons = []
+
+        if daily_prediction is None:
+            missing_horizons.append("DAILY")
+
+        if weekly_prediction is None:
+            missing_horizons.append("WEEKLY")
+
+        if monthly_prediction is None:
+            missing_horizons.append("MONTHLY")
 
         latest_features = self.get_price_features(symbol)
 
@@ -500,6 +524,14 @@ class EntryDecisionEngine:
             or monthly_return < config.MONTHLY_MIN_PREDICTED_RETURN
         ):
             reasons.append("MONTHLY_FORECAST_BEARISH")
+
+        # Daily signal is a timing gate, not the main weekly/monthly thesis.
+        # If daily is SELL, a stock can wait for better immediate timing
+        # instead of being rejected permanently.
+        daily_timing_wait = (
+            daily_prediction is not None
+            and raw_daily_signal == -1
+        )
 
         # 4. Stock above 50-day moving average.
         if (
@@ -564,15 +596,28 @@ class EntryDecisionEngine:
         if sizing["quantity"] < config.MIN_SHARES_PER_TRADE:
             reasons.append("INVALID_POSITION_SIZE")
 
-        status = (
-            "ELIGIBLE_BUY"
-            if not reasons
-            else "BLOCKED"
-        )
+        if missing_horizons:
+            status = "INSUFFICIENT_DATA"
+
+            missing_text = "_".join(missing_horizons)
+            reasons.insert(
+                0,
+                f"MISSING_{missing_text}_PREDICTION",
+            )
+
+        elif reasons:
+            status = "BLOCKED"
+
+        elif daily_timing_wait:
+            status = "WAIT_DAILY_TIMING"
+
+        else:
+            status = "ELIGIBLE_BUY"
 
         return {
             "symbol": symbol,
             "decision_date": latest_features["date"],
+            "daily_predicted_return": daily_return,
             "weekly_predicted_return": weekly_return,
             "monthly_predicted_return": monthly_return,
             "latest_close": latest_features["close"],
@@ -586,6 +631,7 @@ class EntryDecisionEngine:
             "market_sma_50": market_regime["market_sma_50"],
             "market_sma_200": market_regime["market_sma_200"],
             "market_regime": market_regime["market_regime"],
+            "raw_daily_signal": raw_daily_signal,
             "raw_weekly_signal": raw_weekly_signal,
             "raw_monthly_signal": raw_monthly_signal,
             "entry_status": status,
@@ -641,6 +687,10 @@ class EntryDecisionEngine:
                 predictions["symbol"] == symbol
             ].copy()
 
+            daily = symbol_predictions[
+                symbol_predictions["prediction_horizon"] == "daily_1d"
+            ]
+            
             weekly = symbol_predictions[
                 symbol_predictions["prediction_horizon"] == "weekly_5d"
             ]
@@ -649,11 +699,13 @@ class EntryDecisionEngine:
                 symbol_predictions["prediction_horizon"] == "monthly_20d"
             ]
 
+            daily_row = daily.iloc[0] if not daily.empty else None
             weekly_row = weekly.iloc[0] if not weekly.empty else None
             monthly_row = monthly.iloc[0] if not monthly.empty else None
 
             decision = self.evaluate_symbol(
                 symbol=symbol,
+                daily_prediction=daily_row,
                 weekly_prediction=weekly_row,
                 monthly_prediction=monthly_row,
                 market_regime=market_regime,
@@ -682,6 +734,7 @@ def print_summary(decisions_df: pd.DataFrame) -> None:
     display_columns = [
         "symbol",
         "entry_status",
+        "daily_predicted_return",
         "weekly_predicted_return",
         "monthly_predicted_return",
         "latest_close",
@@ -699,6 +752,7 @@ def print_summary(decisions_df: pd.DataFrame) -> None:
     output = decisions_df.copy()
 
     for column in [
+        "daily_predicted_return",
         "weekly_predicted_return",
         "monthly_predicted_return",
     ]:
