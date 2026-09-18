@@ -12,12 +12,21 @@ This module does NOT send broker orders.
 """
 
 import logging
+import sys
 from datetime import datetime
 
 import pandas as pd
 from sqlalchemy import text
 
 from database import PostgresDatabase
+
+
+# Windows terminals default to cp1252, which cannot encode symbols like
+# the rupee sign (\u20b9). Force UTF-8 so console printing never crashes.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 logging.basicConfig(

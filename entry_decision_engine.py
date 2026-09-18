@@ -21,6 +21,7 @@ Evaluation conditions:
 """
 
 import logging
+import sys
 from typing import Any
 
 import numpy as np
@@ -29,6 +30,14 @@ import pandas as pd
 from database import PostgresDatabase
 from feature_engineering import FeatureEngineer
 from settings import config
+
+
+# Windows terminals default to cp1252, which cannot encode symbols like
+# the rupee sign (\u20b9). Force UTF-8 so console printing never crashes.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 logging.basicConfig(
